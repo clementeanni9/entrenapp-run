@@ -239,6 +239,8 @@ function defStart(){return iso(nextMonday());}
 function fixA(a){if(!a)return a;
   if(!a.schema){a.schema=2;if(!a.dist)a.dist='21';if(!a.raceName)a.raceName='Medio Maratón de Madrid';if(!a.raceDate)a.raceDate='2027-04-04';if(!a.startDate)a.startDate='2026-11-23';
     if(a.did21!=null&&a.didRace==null){a.didRace=a.did21;a.tRace=a.t21;a.whenRace=a.when21;}}
+  if(a.runDays==null&&a.days!=null&&a.days!==''){let cap=4;try{cap={b:4,i:5,a:6}[levelOf(a)];}catch(e){}a.runDays=Math.min(+a.days,cap);if(a.strDays==null)a.strDays=2;if(a.sameDay==null)a.sameDay='si';}
+  if(a.runDays!=null&&a.runDays!=='')a.days=+a.runDays;
   if(Array.isArray(a.lowWeeks))a.lowWeeks=a.lowWeeks.map(w=>typeof w==='number'?iso(addD(new Date(2026,10,23),7*(w-1))):w);
   return a;}
 /* ========= Formato ========= */
@@ -255,7 +257,7 @@ const dist=km=>km<1?Math.round(km*1000/10)*10+' m':nf(km,1)+' km';
 /* ========= Almacenamiento ========= */
 const KEY='entrenappRun.v1';
 let MEM=null;
-const KEY2='entrenappRun.v2';
+const KEY2='entrenappRun.v2',APPV='3.3',KPREV='entrenappRun.prev',KAPPV='entrenappRun.appv';
 /* Lo que se guarda: respuestas (con historial), registro, cambios de día y borrador. El plan se recalcula. */
 const persisted=()=>({app:'EntrenAppRun',v:2,hist:S.hist,log:S.log,moves:S.moves,draft:S.draft,repeats:S.repeats||[],dismiss:S.dismiss||{},extras:S.extras||{},adj:S.adj||[],rest:S.rest||[],noAdj:S.noAdj||{},lastAdj:S.lastAdj||null,savedAt:S.savedAt||0});
 const EMPTYX=()=>({extras:{},adj:[],rest:[],noAdj:{},lastAdj:null});
@@ -306,7 +308,7 @@ async function initRemote(){
     else setSync('ok');
   }catch(e){setSync(SYNC.ref?'err':'local');}
 }
-const DEF={schema:2,dist:'',raceName:'',raceDate:'',startDate:'',name:'',age:'',sex:'',running:'',didRace:'no',best:'',injury:'no',pain:'no',medical:'no',prefDays:[],longDay:6,maxWeekday:60,maxWeekend:120,lowWeeks:['2026-12-21','2026-12-28']};
+const DEF={schema:2,strDays:2,sameDay:'si',dist:'',raceName:'',raceDate:'',startDate:'',name:'',age:'',sex:'',running:'',didRace:'no',best:'',injury:'no',pain:'no',medical:'no',prefDays:[],longDay:6,maxWeekday:60,maxWeekend:120,lowWeeks:['2026-12-21','2026-12-28']};
 let S=Object.assign({v:2,hist:[],log:{},moves:{},draft:null,repeats:[],dismiss:{},savedAt:0},EMPTYX());
 const UI={view:S.answers?'plan':'welcome',tab:'plan',step:0,errs:{},open:null,armed:{},editing:false};
 
@@ -392,18 +394,17 @@ function spread(c,k,must){
   return best;
 }
 function schedule(a,lv){
-  const n=+a.days;let ld=a.longDay===''||a.longDay==null?6:+a.longDay;let train;
+  const n=+(a.runDays||a.days)||3;let ld=a.longDay===''||a.longDay==null?6:+a.longDay;let train;
   const pref=(a.prefDays||[]).map(Number);
   if(pref.length){
     train=spread(pref,n,pref.includes(ld)?ld:null);
     if(!train.includes(ld)){let b=train[train.length-1],bd=99;for(const d of train){const dd=cd(d,ld)-(d>=5?.5:0);if(dd<bd){bd=dd;b=d;}}ld=b;}
   }else{
-    train=DEFD[n].slice();
+    train=DEFD[Math.min(6,Math.max(2,n))].slice();
     if(!train.includes(ld)){let bi=0,bd=99;train.forEach((d,i)=>{const dd=cd(d,ld);if(dd<bd){bd=dd;bi=i;}});train[bi]=ld;train=[...new Set(train)].sort((x,y)=>x-y);}
   }
-  const rd=Math.min(train.length,{b:4,i:5,a:6}[lv]);
-  const run=spread(train,rd,ld);
-  return {train,ld,run,rd,extra:train.filter(d=>!run.includes(d))};
+  const run=train.slice(),rd=run.length,cap={b:4,i:5,a:6}[lv];
+  return {train,ld,run,rd,cap,over:rd>cap,extra:[0,1,2,3,4,5,6].filter(d=>!run.includes(d))};
 }
 function pickQ(run,ld,n){
   const c=run.filter(d=>d!==ld&&d!==(ld+1)%7&&d!==(ld+6)%7);
@@ -414,13 +415,14 @@ function pickQ(run,ld,n){
   for(const p of combos(c,2)){if(cd(p[0],p[1])<2)continue;const s=Math.min(cd(p[0],ld),cd(p[1],ld))*10+cd(p[0],p[1]);if(s>bs){bs=s;best=p;}}
   return best?best.sort((x,y)=>x-y):[srt[0]];
 }
-function pickS(ld,extra,qd,easy,n){
+function pickS(ld,extra,qd,easy,n,same){
   const bad=new Set([ld,(ld+6)%7]);const seen=new Set();const c=[];
-  [[extra,0],[qd,1],[easy,3]].forEach(([arr,p])=>arr.forEach(d=>{if(!bad.has(d)&&!seen.has(d)){seen.add(d);c.push({d,p});}}));
+  const groups=same===false?[[extra,0]]:[[extra,0],[qd,1],[easy,3]];
+  groups.forEach(([arr,p])=>arr.forEach(d=>{if(!bad.has(d)&&!seen.has(d)){seen.add(d);c.push({d,p});}}));
   if(!c.length||n<=0)return [];
   const k=Math.min(n,c.length);let best=null,bs=-1e9;
-  for(const s of combos(c,k)){const g=k>1?cd(s[0].d,s[1].d):7;const sc=(g>=2?100:0)-s.reduce((t,x)=>t+x.p,0)*10+g;if(sc>bs){bs=sc;best=s;}}
-  return best;
+  for(const s of combos(c,k)){let g=7;for(let i=0;i<s.length;i++)for(let j=i+1;j<s.length;j++)g=Math.min(g,cd(s[i].d,s[j].d));const sc=(g>=2?100:0)-s.reduce((t,x)=>t+x.p,0)*10+g;if(sc>bs){bs=sc;best=s;}}
+  return best.slice().sort((x,y)=>x.d-y.d);
 }
 
 /* ========= Sesiones ========= */
@@ -525,7 +527,9 @@ function buildPlan(a,P,repeats,bopt){
   const ctr={fartlek:0,hills:0,thr:{b:0,i:1,a:2}[lv],int:0,hm:{b:0,i:1,a:2}[lv]},alt={base:0,dev:0,spec:0,taper:0};
   let testPend=P.est,testWk=lv==='b'&&cur<15?8:3;if(pain)testWk=Math.max(testWk,4);
   const plyo=ph=>ph!=='base'&&!(pain&&ph==='dev');
-  const nS0=w=>(w<=3&&(+a.strengthDays||0)===0)?1:2;
+  const SD=a.strDays==null||a.strDays===''?2:+a.strDays,same=a.sameDay!=='no';
+  const nS0=w=>(w<=3&&(+a.strengthDays||0)===0)?Math.min(SD,1):SD;
+  const nSred=SD>0?Math.max(1,Math.ceil(SD/2)):0;let strShort=0,runShort=0,runShortN=0;
   const snaps={};
   const snap=()=>JSON.parse(JSON.stringify({mode,stage,cnt,lastV,lastL,idealL,kmW,peakL,rot,firstKm,ctr,alt,testPend}));
   const restore=o=>{({mode,stage,cnt,lastV,lastL,idealL,kmW,peakL,rot,firstKm,testPend}=o);Object.assign(ctr,o.ctr);Object.assign(alt,o.alt);};
@@ -573,9 +577,9 @@ function buildPlan(a,P,repeats,bopt){
       W.kind=low.has(w)?'low':w>=TS?'taper':'load';W.rw=true;W.stage=Math.min(stage,7);
       const rdays=spread(sch.train,Math.min(3,sch.train.length),sch.ld);
       rdays.forEach((d,i)=>add(rwS(`w${w}-rw${i+1}`,d,W.stage,d===sch.ld,P)));
-      const nS=W.kind!=='load'?1:nS0(w);
-      const others=sch.train.filter(d=>!rdays.includes(d));
-      pickS(sch.ld,others,[],rdays.filter(d=>d!==sch.ld),nS).forEach((x,i)=>add(strS(`w${w}-s${i+1}`,x.d,(rot++%2)?'B':'A',ph,plyo(ph),rdays.includes(x.d)?'r':'')));
+      const nS=W.kind!=='load'?nSred:nS0(w);
+      const others=[0,1,2,3,4,5,6].filter(d=>!rdays.includes(d));
+      const ps=pickS(sch.ld,others,[],rdays.filter(d=>d!==sch.ld),nS,same);if(ps.length<nS)strShort=Math.max(strShort,nS-ps.length);ps.forEach((x,i)=>add(strS(`w${w}-s${i+1}`,x.d,(rot++%2)?'B':'A',ph,plyo(ph),rdays.includes(x.d)?'r':'')));
       pushW(W);continue;
     }
     if(firstKm===null)firstKm=w;
@@ -609,7 +613,7 @@ function buildPlan(a,P,repeats,bopt){
     L=r05(Math.max(L,3));
     if(dk==='42'&&kind==='load'&&prevLong>=26&&L>=26)L=r05(L*.75);
     const easyOnly=notT&&kmW<=3;
-    let nQ=Math.max(0,Math.min(2,sch.rd-2));
+    let nQ=Math.max(0,Math.min(2,Math.min(sch.rd,sch.cap)-2));
     if(a.priority==='health')nQ=Math.min(nQ,1);
     if(kind!=='load')nQ=Math.min(nQ,1);
     if(w<=3&&(pain||notT))nQ=0;
@@ -660,14 +664,15 @@ function buildPlan(a,P,repeats,bopt){
       used.forEach((d,i)=>{const cap=r05(dMax(d)*60/eM);add(easyS(`w${w}-e${i+1}`,d,Math.min(per,cap),P,d===stDay));});
     }
     const restRun=eDays.filter(d=>!used.includes(d));
-    let nS=kind!=='load'?1:nS0(w);
-    pickS(sch.ld,sch.extra.concat(restRun),qUsed,used,nS).forEach((x,i)=>add(strS(`w${w}-s${i+1}`,x.d,(rot++%2)?'B':'A',ph,plyo(ph),qUsed.includes(x.d)?'q':used.includes(x.d)?'r':'')));
+    let nS=kind!=='load'?nSred:nS0(w);
+    if(kind==='load'&&w>3&&restRun.length){runShort=Math.max(runShort,restRun.length);runShortN++;}
+    const ps=pickS(sch.ld,sch.extra.concat(restRun),qUsed,used,nS,same);if(kind==='load'&&ps.length<nS)strShort=Math.max(strShort,nS-ps.length);ps.forEach((x,i)=>add(strS(`w${w}-s${i+1}`,x.d,(rot++%2)?'B':'A',ph,plyo(ph),qUsed.includes(x.d)?'q':used.includes(x.d)?'r':'')));
     pushW(W);
   }
   P._short=false;
   weeks.forEach(W=>{W.sessions.sort((x,y)=>x.day-y.day||(x.type==='strength')-(y.type==='strength')||(!!x.extra)-(!!y.extra));W.vol=Math.round(W.sessions.filter(s=>!s.optional&&!s.extra).reduce((t,s)=>t+(s.km||0),0)*10)/10;});
   const meta={sch,peakV:Math.max(0,...weeks.filter(W=>W.n<N).map(W=>W.vol)),peakL:Math.max(0,...weeks.filter(W=>W.n<N).map(W=>{const l=W.sessions.find(s=>s.type==='long');return l?l.km:0;})),tl,testWeek:(weeks.find(W=>W.sessions.some(s=>s.type==='test'))||{}).n||null,firstKm,
-    rwRace:false,ldMoved:+a.longDay!==sch.ld&&a.longDay!==''&&a.longDay!=null};
+    strShort,runShort:runShortN>=2?runShort:0,rwRace:false,ldMoved:+a.longDay!==sch.ld&&a.longDay!==''&&a.longDay!=null};
   meta.lmin=DIST.lmin[lv];meta.rwRace=meta.peakL<meta.lmin;
   return {weeks,meta};
 }
@@ -679,7 +684,11 @@ function warnings(a,P,meta){
   if(a.pain==='si')push('red','Molestias actuales'+(a.painWhere?': '+esc(a.painWhere):''),'Consulta con un fisioterapeuta. Regla del dolor: puedes entrenar con molestias de hasta 3/10 si no empeoran durante la sesión y desaparecen en 24 h. Si no se cumple, para. El plan arranca más suave, sin calidad las 3 primeras semanas y sin pliometría hasta la fase específica.');
   if(a.injury==='si'&&a.injResolved==='no')push('orange','Lesión sin resolver'+(a.injZone?': '+esc(a.injZone):''),'Termina la recuperación antes de meter calidad. Si la zona da guerra, quita la sesión de calidad de esa semana.');
   if(P.goalWarn&&P.goalWarn.t==='slow')push('blue','Objetivo conservador',`Tu predicción es ${hms(P.pred)}${P.est?' (estimada)':''} y tu objetivo ${hms(P.goalWarn.G)}. Es prudente; si todo va bien, podrás revisarlo al alza.`);
-  if(+a.days===2)push('orange','Solo 2 días por semana','Da para terminar, pero no para mucho más. Las dos sesiones cuentan doble: no te saltes ninguna y protege el descanso entre ellas.');
+  if(meta.sch.over)push('orange','Más días de carrera de lo habitual para tu nivel',`Para un nivel ${LV[profile(a).lv].toLowerCase()} lo habitual son hasta ${meta.sch.cap} días de carrera. El volumen semanal es el mismo, repartido en más días: rodajes más cortos y más descanso entre sesiones de calidad. Si notas fatiga, vuelve a ${meta.sch.cap} días.`);
+  if(meta.runShort>0)push('blue','Algunos días de carrera quedan libres',`En varias semanas el volumen no da para un rodaje útil en todos tus días de carrera (mínimo ${ {b:3,i:4,a:4}[profile(a).lv]} km), así que ${meta.runShort===1?'un día queda':'algunos días quedan'} de descanso. Se irán llenando a medida que sube el volumen.`);
+  if(+a.strDays===0)push('blue','Sin fuerza','Has elegido 0 días de fuerza. La fuerza reduce el riesgo de lesión y mejora la economía de carrera: con 1 día por semana ya se nota.');
+  if(meta.strShort>0)push('orange','No caben todas las sesiones de fuerza',a.sameDay==='no'?`Con ${a.runDays} días de carrera y sin fuerza el mismo día, no hay días libres suficientes (la fuerza nunca va el día de la tirada larga ni el anterior). Algunas semanas tendrás ${meta.strShort} sesión${meta.strShort>1?'es':''} menos. Si puedes, permite hacer fuerza el mismo día que corres.`:`Algunas semanas no hay días adecuados para todas las sesiones de fuerza (nunca van el día de la tirada larga ni el anterior). Tendrás ${meta.strShort} sesión${meta.strShort>1?'es':''} menos.`);
+  if(+a.days===2)push('orange','Solo 2 días de carrera por semana','Da para terminar, pero no para mucho más. Las dos sesiones cuentan doble: no te saltes ninguna y protege el descanso entre ellas.');
   if(a.sleep==='<6'||a.stress==='alto')push('blue','Sueño y estrés','Con poco sueño o estrés alto el cuerpo asimila peor la carga. El plan sube más despacio (6 % por semana). Si una noche duermes muy mal, cambia la calidad por un rodaje suave.');
   if(P.est)push('blue','Plan sin marca: ritmos estimados',meta.testWeek?`Los ritmos son estimados por nivel. En la semana ${meta.testWeek} tienes un test de 5K; mete el tiempo en "Editar respuestas" y el plan se recalcula.`:'Los ritmos son estimados por nivel. Cuando puedas correr 5 km seguidos, haz un test y mete el tiempo en "Editar respuestas".');
   if(a.running==='no')push('blue','Vuelves a entrenar','Las primeras semanas son para que tendones y huesos se adapten. Van por detrás del corazón y los pulmones: aunque te sientas con fuerzas, no adelantes etapas.');
@@ -866,7 +875,7 @@ function propHTML(){
   const ps=proposals();if(!ps.length)return '';
   return ps.map(p=>{
     let t,x,ok='Aceptar';
-    if(p.k==='days'){t='¿Un día más por semana?';x=`Llevas varias semanas añadiendo un día extra. Propuesta: pasar de ${p.n} a ${p.n+1} días por semana${S.answers.prefDays&&S.answers.prefDays.length?', sumando el '+DAYS[p.day].toLowerCase():''}. El plan se recalcula conservando tu registro.${p.run?' Tu nivel ya tiene el máximo de días de carrera: el día nuevo será de fuerza.':''}`;ok=`Pasar a ${p.n+1} días`;}
+    if(p.k==='days'){t='¿Un día más por semana?';x=`Llevas varias semanas añadiendo un día extra. Propuesta: pasar de ${p.n} a ${p.n+1} días de carrera por semana${S.answers.prefDays&&S.answers.prefDays.length?', sumando el '+DAYS[p.day].toLowerCase():''}. El plan se recalcula conservando tu registro.${p.run?' Es más de lo habitual para tu nivel: el plan reparte el mismo volumen en más días.':''}`;ok=`Pasar a ${p.n+1} días`;}
     else if(p.k==='week'){t='Ajustar el plan';x=`La semana ${p.at-1} quedó al ${Math.round(p.pct*100)} %. Propuesta: esta semana repite la carga de la semana ${p.base} y el resto del plan se recalcula hasta la carrera, sin compensar lo perdido. El pico puede quedar algo más bajo.`;ok='Repetir carga';}
     else if(p.k==='move'){t=`${p.s.title}: sin hacer`;x=`Era para el ${DAYS[p.from].toLowerCase()}. Propuesta: moverla al ${DAYS[p.to].toLowerCase()} ${dDate(curWeek(),p.to).getDate()}, que está libre${p.s.type==='quality'?' y lejos de la tirada larga':''}.`;ok='Mover';}
     else{const n=p.list.length;t=n===1?`${p.list[0].s.title}: sin hacer`:`${n} sesiones sin hacer esta semana`;
@@ -875,6 +884,54 @@ function propHTML(){
     return `<div class="alert prop" style="--c:var(--blue)"><b>${esc(t)}</b><p>${esc(x)}</p><div class="row" style="margin-top:10px"><button class="btn" style="min-height:44px;font-size:15px" data-a="pOk" data-id="${p.id}">${ok}</button><button class="btn sec" style="min-height:44px;font-size:15px" data-a="pNo" data-id="${p.id}">Dejarlo así</button></div></div>`;
   }).join('');
 }
+
+/* ========= Importar actividad ========= */
+function parseActivity(name,buf){
+  const u8=new Uint8Array(buf),low=String(name||'').toLowerCase();
+  const isFit=u8.length>12&&String.fromCharCode(u8[8],u8[9],u8[10],u8[11])==='.FIT';
+  if(isFit||low.endsWith('.fit'))return parseFIT(buf);
+  const txt=new TextDecoder().decode(u8);
+  if(/<TrainingCenterDatabase/i.test(txt))return parseTCX(txt);
+  if(/<gpx[\s>]/i.test(txt))return parseGPX(txt);
+  throw new Error('fmt');
+}
+const byTag=(el,t)=>Array.from(el.getElementsByTagNameNS('*',t));
+const kid=(el,t)=>{for(const c of el.children)if(c.localName===t)return c;return null;};
+function hav(a,b){const R=6371e3,r=x=>x*Math.PI/180,dLa=r(b[0]-a[0]),dLo=r(b[1]-a[1]),h=Math.sin(dLa/2)**2+Math.cos(r(a[0]))*Math.cos(r(b[0]))*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
+function parseGPX(txt){
+  const doc=new DOMParser().parseFromString(txt,'application/xml'),pts=byTag(doc,'trkpt');if(pts.length<2)throw new Error('vacio');
+  let d=0,prev=null,t0=null,t1=null,hr=[],moving=0,lastT=null;
+  pts.forEach(p=>{const c=[+p.getAttribute('lat'),+p.getAttribute('lon')],te=kid(p,'time'),t=te?new Date(te.textContent):null;
+    if(prev){const seg=hav(prev,c);d+=seg;if(t&&lastT){const dt=(t-lastT)/1000;if(dt>0&&dt<60&&seg/dt>0.5)moving+=dt;}}
+    prev=c;if(t&&!isNaN(t)){if(!t0)t0=t;t1=t;lastT=t;}
+    const h=byTag(p,'hr')[0];if(h)hr.push(+h.textContent);});
+  const el=t0&&t1?(t1-t0)/1000:0;
+  return {km:d/1000,sec:moving>el*.5?moving:el,hr:hr.length?Math.round(hr.reduce((a,b)=>a+b,0)/hr.length):null,start:t0};
+}
+function parseTCX(txt){
+  const doc=new DOMParser().parseFromString(txt,'application/xml'),laps=byTag(doc,'Lap');let d=0,sec=0,hrs=0,hrt=0,start=null;
+  laps.forEach(l=>{const tt=kid(l,'TotalTimeSeconds'),dm=kid(l,'DistanceMeters'),ah=kid(l,'AverageHeartRateBpm');const t=tt?+tt.textContent:0;sec+=t;if(dm)d+=+dm.textContent;
+    if(ah){const v=kid(ah,'Value');if(v){hrs+=+v.textContent*t;hrt+=t;}}if(!start&&l.getAttribute('StartTime'))start=new Date(l.getAttribute('StartTime'));});
+  if(!d){const tp=byTag(doc,'DistanceMeters');if(tp.length)d=+tp[tp.length-1].textContent;}
+  if(!sec||!d)throw new Error('vacio');
+  return {km:d/1000,sec,hr:hrt?Math.round(hrs/hrt):null,start};
+}
+function parseFIT(buf){
+  const dv=new DataView(buf),hs=dv.getUint8(0),size=dv.getUint32(4,true),end=Math.min(buf.byteLength,hs+size);let p=hs;const defs={};const ses=[],laps=[];
+  const rd=(f,le,o)=>{const s=f.s,bt=f.t&0x1F;if(s===1){const v=dv.getUint8(o);return v===0xFF?null:v;}if(s===2){const v=dv.getUint16(o,le);return v===0xFFFF?null:v;}if(s===4){if(bt===8)return dv.getFloat32(o,le);const v=dv.getUint32(o,le);return v===0xFFFFFFFF?null:v;}return null;};
+  const data=(def)=>{const v={};for(const f of def.fields){v[f.n]=rd(f,def.le,p);p+=f.s;}p+=def.dev;if(def.g===18)ses.push(v);else if(def.g===19)laps.push(v);};
+  while(p<end){const h=dv.getUint8(p++);
+    if(h&0x80){const def=defs[(h>>5)&3];if(!def)throw new Error('fit');data(def);}
+    else if(h&0x40){const lt=h&0x0F,dev=h&0x20;p++;const le=dv.getUint8(p++)===0,g=dv.getUint16(p,le);p+=2;const nf=dv.getUint8(p++),fields=[];for(let i=0;i<nf;i++){fields.push({n:dv.getUint8(p),s:dv.getUint8(p+1),t:dv.getUint8(p+2)});p+=3;}
+      let ds=0;if(dev){const nd=dv.getUint8(p++);for(let i=0;i<nd;i++){ds+=dv.getUint8(p+1);p+=3;}}defs[lt]={le,g,fields,dev:ds};}
+    else{const def=defs[h&0x0F];if(!def)throw new Error('fit');data(def);}}
+  const EP=631065600;let km=0,sec=0,hr=null,start=null;
+  if(ses.length){ses.forEach(x=>{km+=(x[9]||0)/100000;sec+=((x[8]!=null?x[8]:x[7])||0)/1000;if(x[16]!=null)hr=x[16];if(!start&&x[2]!=null)start=new Date((x[2]+EP)*1000);});}
+  else{let hs2=0,ht=0;laps.forEach(x=>{const t=((x[8]!=null?x[8]:x[7])||0)/1000;km+=(x[9]||0)/100000;sec+=t;if(x[15]!=null){hs2+=x[15]*t;ht+=t;}if(!start&&x[2]!=null)start=new Date((x[2]+EP)*1000);});if(ht)hr=Math.round(hs2/ht);}
+  if(!km||!sec)throw new Error('vacio');
+  return {km,sec,hr,start};
+}
+function readFile(input){return new Promise((res,rej)=>{const f=input.files&&input.files[0];if(!f)return rej(new Error('nofile'));const r=new FileReader();r.onload=()=>res({name:f.name,buf:r.result});r.onerror=()=>rej(r.error);r.readAsArrayBuffer(f);});}
 
 /* ========= Viabilidad ========= */
 const VCACHE={};
@@ -894,8 +951,8 @@ function leverList(a,ev){
   if(+a[k]<capK||+a.maxWeekday<90)L.push({id:'time',ord:1,set:(x,min)=>{x[k]=min||capK;if(!min&&+x.maxWeekday<90)x.maxWeekday=90;},
     search:x0=>{for(let m=+a[k]+15;m<=capK;m+=15){const x=JSON.parse(JSON.stringify(x0));x[k]=m;if(evalA(x).ok)return {x,txt:`Sube a ${m} min el tiempo máximo del ${DAYS[S.meta.sch.ld].toLowerCase()} (día de la tirada larga)`};}return null;},
     txt:`Sube a ${capK} min el tiempo máximo del día de la tirada larga${+a.maxWeekday<90?' y a 90 min entre semana':''}`});
-  if(+a.days<6)L.push({id:'days',ord:2,set:x=>{x.days=+x.days+1;if(x.prefDays&&x.prefDays.length){const rest=[0,1,2,3,4,5,6].filter(d=>!x.prefDays.includes(d));let best=rest[0],bs=-1;rest.forEach(d=>{const t=x.prefDays.concat(d),sp=spread(t,t.length,null),g=Math.min(...sp.map((v,i)=>i<sp.length-1?sp[i+1]-v:7-v+sp[0]));if(g>bs){bs=g;best=d;}});x.prefDays=x.prefDays.concat(best).sort((p,q)=>p-q);}},
-    txt:`Pasa de ${a.days} a ${+a.days+1} días de entrenamiento por semana`});
+  if(+a.days<6)L.push({id:'days',ord:2,set:x=>{x.days=+x.days+1;x.runDays=x.days;if(x.prefDays&&x.prefDays.length){const rest=[0,1,2,3,4,5,6].filter(d=>!x.prefDays.includes(d));let best=rest[0],bs=-1;rest.forEach(d=>{const t=x.prefDays.concat(d),sp=spread(t,t.length,null),g=Math.min(...sp.map((v,i)=>i<sp.length-1?sp[i+1]-v:7-v+sp[0]));if(g>bs){bs=g;best=d;}});x.prefDays=x.prefDays.concat(best).sort((p,q)=>p-q);}},
+    txt:`Pasa de ${a.days} a ${+a.days+1} días de carrera por semana`});
   if(!a.boost&&safeVol(a))L.push({id:'vol',ord:3,set:x=>{x.boost=true;},txt:'Sube un 15 % el techo de volumen semanal y progresa al 10 % por semana (el máximo seguro)'});
   if(a.priority==='health')L.push({id:'prio',ord:4,set:x=>{x.priority='perf';},txt:'Cambia la prioridad de "disfrute y salud" a "rendimiento" (permite 2 sesiones de calidad)'});
   const st=startOf(a),earliest=nextMonday();
@@ -984,8 +1041,10 @@ const Q=[
   {k:'goalTime',ty:'time',hh:1,l:'Tiempo objetivo (opcional)',if:a=>a.goal==='improve',rngf:a=>TRNG[a.dist]||TRNG['21'],hint:'Si lo dejas vacío, el plan propone una mejora realista.'},
   {k:'priority',ty:'seg',l:'Prioridad',req:1,o:[['perf','Rendimiento'],['health','Disfrute y salud']]}]},
  {t:'Disponibilidad',f:[
-  {k:'days',ty:'seg',l:'¿Cuántos días por semana puedes entrenar?',req:1,o:[[2,'2'],[3,'3'],[4,'4'],[5,'5'],[6,'6']]},
-  {k:'prefDays',ty:'days',l:'¿Qué días prefieres?',hint:'Si tu semana cambia, déjalo vacío: podrás mover cada sesión de día.'},
+  {k:'runDays',ty:'seg',l:'¿Cuántos días por semana quieres correr?',req:1,o:[[2,'2'],[3,'3'],[4,'4'],[5,'5'],[6,'6']]},
+  {k:'strDays',ty:'seg',l:'¿Cuántos días por semana quieres hacer fuerza?',req:1,o:[[0,'0'],[1,'1'],[2,'2'],[3,'3']],hintf:a=>+a.strDays===0&&a.strDays!==''&&a.strDays!=null?'Recomendado al menos 1: la fuerza reduce el riesgo de lesión y mejora la economía de carrera.':'En semanas de descarga y de puesta a punto se hace la mitad.'},
+  {k:'sameDay',ty:'seg',l:'¿Puedes hacer fuerza el mismo día que corres?',req:1,if:a=>+a.strDays>0,o:[['si','Sí, si hace falta'],['no','No']],hint:'Si contestas que sí, primero se usan días sin carrera y, si no alcanzan, la fuerza va después de la calidad o de un rodaje. Nunca el día de la tirada larga ni el anterior.'},
+  {k:'prefDays',ty:'days',l:'¿Qué días prefieres para correr?',hint:'Si tu semana cambia, déjalo vacío: podrás mover cada sesión de día.'},
   {k:'longDay',ty:'day1',l:'Día preferido para la tirada larga',hint:'Por defecto, domingo.'},
   {k:'maxWeekday',ty:'sel',l:'Tiempo máximo por sesión entre semana',o:MW},
   {k:'maxWeekend',ty:'sel',l:'Tiempo máximo por sesión en fin de semana',of:MEf},
@@ -1025,7 +1084,7 @@ function validate(step){
     if(a.raceDate<=t)e.raceDate='La carrera tiene que ser en el futuro.';
     else if(a.startDate<iso(addD(today0(),-60)))e.startDate='La fecha de inicio no puede ser de hace más de dos meses.';
     else{const n=weeksFor(a);if(a.startDate>=a.raceDate||n<3)e.startDate='Deja al menos 3 semanas entre el inicio y la carrera.';else if(n>26)e.startDate='Como máximo 26 semanas entre el inicio y la carrera. Empieza más tarde.';}}
-  if(step===4&&a.prefDays&&a.prefDays.length&&a.days&&a.prefDays.length<+a.days)e.prefDays=`Has marcado ${a.prefDays.length} día${a.prefDays.length>1?'s':''} y puedes entrenar ${a.days}. Marca al menos ${a.days} o déjalo vacío.`;
+  if(step===4&&a.prefDays&&a.prefDays.length&&a.runDays&&a.prefDays.length<+a.runDays)e.prefDays=`Has marcado ${a.prefDays.length} día${a.prefDays.length>1?'s':''} y quieres correr ${a.runDays}. Marca al menos ${a.runDays} o déjalo vacío.`;
   return e;
 }
 function fieldHTML(f,a,err){
@@ -1048,7 +1107,7 @@ function fieldHTML(f,a,err){
     if(f.k==='startDate'&&a.startDate&&a.raceDate&&a.dist&&a.startDate<a.raceDate){const n=weeksFor(a),mw=DCFG[a.dist].minW;h+=`<div class="hint">${n} semanas hasta la carrera.${n<mw?` Menos de las ${mw} recomendadas para un ${DCFG[a.dist].lab}: el análisis del plan te dirá si llegas.`:''}</div>`;}
     const L=S.hist.length?S.hist[S.hist.length-1].a:null;
     if(UI.editing&&L&&(f.k==='startDate'||f.k==='raceDate')&&v!==L[f.k])h+=`<div class="hint" style="color:var(--orange)">Si cambias las fechas o la distancia, el plan y el registro empiezan de cero.</div>`;}
-  if(f.hint)h+=`<div class="hint">${esc(f.hint)}</div>`;
+  const hn=f.hintf?f.hintf(a):f.hint;if(hn)h+=`<div class="hint">${esc(hn)}</div>`;
   if(err)h+=`<div class="err" role="alert">${esc(err)}</div>`;
   return h+'</div>';
 }
@@ -1088,7 +1147,9 @@ function logFormHTML(s,W,P){
   let h=`<div class="log" id="lf"><div class="lb small" style="margin-bottom:8px">Registro de la sesión</div><div class="row">`;
   if(run)h+=`<div><label class="small" for="lfkm">Km reales</label><div class="unitw"><input class="inp" id="lfkm" type="number" inputmode="decimal" step="0.1" min="0" data-lf="km" value="${esc(f.km)}"><span class="u">km</span></div></div>`;
   h+=`<div><label class="small" for="lfmin">Minutos</label><div class="unitw"><input class="inp" id="lfmin" type="number" inputmode="numeric" min="0" data-lf="min" value="${esc(f.min)}"><span class="u">min</span></div></div></div>`;
+  if(run)h+=`<label class="btn sec" style="margin-top:10px;min-height:46px;font-size:15px;cursor:pointer">Importar actividad (.fit, .gpx, .tcx)<input type="file" data-file="act" style="display:none"></label>${f.imp?`<div class="hint" style="color:var(--green)">${esc(f.imp)}</div>`:''}`;
   if(run)h+=`<div style="margin-top:8px"><label class="small" for="lfpace">Ritmo medio (min/km)</label><input class="inp" id="lfpace" type="text" inputmode="numeric" placeholder="${esc(pc)}" data-lf="pace" value="${esc(f.paceTxt||'')}"><div class="hint" id="lfpc">${pc?'Calculado: '+pc+' /km. Corrígelo si tu reloj dice otra cosa.':'Se calcula con los km y los minutos.'}</div></div>`;
+  if(run)h+=`<div style="margin-top:8px"><label class="small" for="lfhr">Pulso medio (opcional)</label><div class="unitw"><input class="inp" id="lfhr" type="number" inputmode="numeric" min="40" max="230" data-lf="hr" value="${esc(f.hr||'')}"><span class="u">ppm</span></div></div>`;
   h+=`<div class="lb small" style="margin:12px 0 6px">RPE (esfuerzo)</div><div class="rpe" role="radiogroup" aria-label="RPE">${[1,2,3,4,5,6,7,8,9,10].map(r=>`<button style="--c:${rpeCol(r)}" class="${+f.rpe===r?'on':''}" role="radio" aria-checked="${+f.rpe===r}" data-a="lfSet" data-k="rpe" data-v="${r}">${r}</button>`).join('')}</div>`;
   h+=`<div class="lb small" style="margin:12px 0 6px">Dolor (0 = nada)</div><div class="rpe" style="grid-template-columns:repeat(11,1fr)" role="radiogroup" aria-label="Dolor">${[0,1,2,3,4,5,6,7,8,9,10].map(r=>`<button style="--c:${r===0?'#30D158':r<=3?'#FFD60A':r<=5?'#FF9F0A':'#FF453A'}" class="${+f.pain===r?'on':''}" role="radio" aria-checked="${+f.pain===r}" data-a="lfSet" data-k="pain" data-v="${r}">${r}</button>`).join('')}</div>`;
   if(+f.pain>0)h+=`<div class="lb small" style="margin:10px 0 6px">¿Dónde?</div><div class="chips">${ZONES.map(z=>`<button class="chip${f.zone===z?' on':''}" data-a="lfSet" data-k="zone" data-v="${z}">${z}</button>`).join('')}</div>`;
@@ -1099,7 +1160,7 @@ function logFormHTML(s,W,P){
   return h;
 }
 function lfDraftLog(s,W){const f=UI.lf,run=RUNT.has(s.type);let pace=null;if(run&&f.paceTxt){const m=/^(\d{1,2})[:.,](\d{1,2})$/.exec(String(f.paceTxt).trim());if(m)pace=+m[1]*60+ +m[2];}
-  return {st:'done',km:run?(f.km===''?0:Math.max(0,+f.km)):null,min:f.min===''?s.min:Math.max(0,Math.round(+f.min)),pace,rpe:f.rpe?+f.rpe:null,pain:+f.pain||0,zone:+f.pain>0?(f.zone||''):'',note:f.note||'',date:iso(sDate(W,s)),saved:iso(today0())};}
+  return {st:'done',hr:run&&+f.hr>0?Math.round(+f.hr):null,km:run?(f.km===''?0:Math.max(0,+f.km)):null,min:f.min===''?s.min:Math.max(0,Math.round(+f.min)),pace,rpe:f.rpe?+f.rpe:null,pain:+f.pain||0,zone:+f.pain>0?(f.zone||''):'',note:f.note||'',date:f.adate&&f.adate<=iso(today0())?f.adate:iso(sDate(W,s)),saved:iso(today0())};}
 function lfPreview(s){
   const f=UI.lf;if(!f)return '';const W=S.plan[+s.id.split('-')[0].replace(/\D/g,'')-1]||weekOfS(s);let h='';
   const run=RUNT.has(s.type),k=+f.km||0;
@@ -1133,7 +1194,7 @@ function sessionHTML(s,W,P){
   else if(done){
     const k=lkm(s,l),m=lmin(s,l),run=RUNT.has(s.type),pc=run&&k>0&&m>0?(l.pace?+l.pace:m*60/k):null;
     const diff=run&&s.km?Math.round((k/s.km-1)*100):null;
-    h+=`<div class="log"><div style="font-size:15px;font-variant-numeric:tabular-nums">${run?`<b>${nf(k,1)} km</b> · `:''}${m} min${pc?` · ${mmss(pc)} /km`:''}${l.rpe?` · <span style="color:${rpeCol(+l.rpe)}">RPE ${l.rpe}</span>`:''}${+l.pain>0?` · <span style="color:var(--${+l.pain>=4?'red':'orange'})">Dolor ${l.pain}${l.zone?' ('+esc(l.zone.toLowerCase())+')':''}</span>`:''}</div>
+    h+=`<div class="log"><div style="font-size:15px;font-variant-numeric:tabular-nums">${run?`<b>${nf(k,1)} km</b> · `:''}${m} min${pc?` · ${mmss(pc)} /km`:''}${l.hr?` · ${l.hr} ppm`:''}${l.rpe?` · <span style="color:${rpeCol(+l.rpe)}">RPE ${l.rpe}</span>`:''}${+l.pain>0?` · <span style="color:var(--${+l.pain>=4?'red':'orange'})">Dolor ${l.pain}${l.zone?' ('+esc(l.zone.toLowerCase())+')':''}</span>`:''}</div>
     ${diff!=null&&s.type!=='extra'&&Math.abs(diff)>=5?`<div class="small" style="margin-top:4px">${nf(k,1)} km de ${nf(s.km,1)} previstos (${diff>0?'+':''}${diff} %)</div>`:''}
     ${l.note?`<div class="small" style="margin-top:4px">${esc(l.note)}</div>`:''}
     <div class="loadv">${l.rpe?`Carga: <b>${l.rpe*m}</b> UA`:'<span class="small">Sin RPE: edita para calcular la carga.</span>'}</div>
@@ -1193,7 +1254,7 @@ function headerHTML(){
 }
 function actionsHTML(){
   const ar=UI.armed.reset;
-  return `<div class="actions"><button class="btn sec" data-a="edit">Editar respuestas</button><div class="row"><button class="btn sec" data-a="copy">Copiar plan</button><button class="btn sec" data-a="backup">Copia de seguridad</button></div><button class="btn ${ar?'armed':'danger'}" data-a="reset">${ar?'Pulsa otra vez para borrar':'Empezar de nuevo'}</button></div>
+  return `<div class="actions"><button class="btn sec" data-a="edit">Editar respuestas</button><div class="row"><button class="btn sec" data-a="copy">Copiar plan</button><button class="btn sec" data-a="backup">Exportar progreso</button></div><button class="btn ${ar?'armed':'danger'}" data-a="reset">${ar?'Pulsa otra vez para borrar':'Empezar de nuevo'}</button></div>
   <div class="foot" id="sync" role="status">${syncText()}</div>
   <div class="foot">Este plan es orientativo y no sustituye una valoración médica o profesional.</div>`;
 }
@@ -1210,7 +1271,7 @@ function resTab(P){
   const pk=S.plan.filter(W=>W.n<NW).reduce((b,W)=>W.vol>b.vol?W:b,S.plan[0]);
   const gl={finish:'Terminar',sub:'Bajar de '+hms(+a.goalTime||0),improve:'Mejorar marca de '+DCFG[a.dist].lab}[a.goal];
   h+=`<div class="grid2" style="margin-top:12px">
-  <div class="stat"><div class="k">Nivel</div><div class="v">${LV[P.lv]}</div><div class="d">${meta.sch.rd} días de carrera${meta.sch.extra.length?' + fuerza':''}</div></div>
+  <div class="stat"><div class="k">Nivel</div><div class="v">${LV[P.lv]}</div><div class="d">${meta.sch.rd} días de carrera · ${a.strDays==null?2:a.strDays} de fuerza</div></div>
   <div class="stat"><div class="k">Objetivo</div><div class="v">${hms(P.target)}</div><div class="d">${esc(gl)} · ${mmss(P.tp)} /km</div></div>
   <div class="stat"><div class="k">Predicción actual</div><div class="v">${hms(P.pred)}</div><div class="d">${P.est?'Estimada por nivel':esc(P.ref.lab)}</div></div>
   <div class="stat"><div class="k">Km totales</div><div class="v">${Math.round(tot)}</div><div class="d">${NW} semanas</div></div>
@@ -1320,13 +1381,29 @@ function planText(){
   L.push('','Plan orientativo. No sustituye una valoración médica o profesional.');
   return L.join('\n');
 }
+function prevBackup(){try{const p=JSON.parse(localStorage.getItem(KPREV)||'null');if(p&&p.data){const d=norm(JSON.parse(p.data));if(d&&d.hist.length)return {at:p.at,d};}}catch(e){}return null;}
 function backupSheet(){
-  const has=!!S.answers;
+  const has=!!S.answers,pb=prevBackup();
   const data=has?JSON.stringify(persisted()):'';
-  sheet(`<h3 style="font-size:20px">Copia de seguridad</h3>
-  ${has?`<p class="small">Copia este texto y guárdalo (por ejemplo, en Notas). Para pasar tu progreso a otro dispositivo, pégalo allí en "Importar".</p><textarea readonly id="bkOut" aria-label="Texto de la copia">${esc(data)}</textarea><button class="btn" style="margin-top:10px" data-a="bkCopy">Copiar texto</button>`:''}
-  <h3 style="margin-top:22px">Importar</h3><p class="small">Pega aquí una copia. Sustituye los datos de este dispositivo.</p><textarea id="bkIn" aria-label="Pegar copia" placeholder="Pega aquí el texto de la copia"></textarea><div class="err" id="bkErr"></div>
-  <button class="btn sec" style="margin-top:10px" data-a="bkImport" id="bkBtn">Importar</button><button class="btn sec" style="margin-top:10px" data-a="closeSheet">Cerrar</button>`);
+  sheet(`<h3 style="font-size:20px">Exportar e importar progreso</h3>
+  ${has?`<p class="small">Guarda tu plan y todo tu registro. Sirve para pasarlo a otro dispositivo o como seguro antes de una actualización.</p>
+  <button class="btn" data-a="bkFile">Descargar archivo</button>
+  <textarea readonly id="bkOut" style="margin-top:10px" aria-label="Texto de la copia">${esc(data)}</textarea><button class="btn sec" style="margin-top:10px" data-a="bkCopy">Copiar texto</button>`:''}
+  <h3 style="margin-top:22px">Importar</h3><p class="small">Carga un archivo de copia o pega el texto. Sustituye los datos de este dispositivo.</p>
+  <label class="btn sec" style="cursor:pointer">Cargar archivo<input type="file" data-file="bk" style="display:none"></label>
+  <textarea id="bkIn" style="margin-top:10px" aria-label="Pegar copia" placeholder="O pega aquí el texto de la copia"></textarea><div class="err" id="bkErr"></div>
+  <button class="btn sec" style="margin-top:10px" data-a="bkImport" id="bkBtn">Importar texto</button>
+  ${pb?`<h3 style="margin-top:22px">Copia anterior a la última actualización</h3><p class="small">Guardada automáticamente el ${fmtL(new Date(pb.at))}. Restáurala solo si la actualización ha estropeado algo.</p><button class="btn danger" data-a="bkPrev">Restaurar esa copia</button>`:''}
+  <button class="btn sec" style="margin-top:16px" data-a="closeSheet">Cerrar</button>`);
+}
+function doImport(btn){
+  const err=document.getElementById('bkErr');err.textContent='';let d;
+  try{d=JSON.parse(document.getElementById('bkIn').value.trim());}catch(x){err.textContent='No es una copia válida.';return;}
+  const nd=d&&d.app==='EntrenAppRun'?norm(d):null;
+  if(!nd||!nd.hist.length){err.textContent='No es una copia de EntrenApp Run.';return;}
+  if(S.answers&&!arm('imp',btn,'Pulsa otra vez para sustituir',btn?btn.textContent:'Importar'))return;
+  nd.draft=null;adopt(nd);save();closeSheet();
+  UI.view='plan';UI.tab='plan';UI.open=new Set([openWk()]);render();window.scrollTo(0,0);toast('Copia importada');
 }
 function arm(key,btn,label,orig){
   if(UI.armed[key])return true;
@@ -1338,7 +1415,7 @@ function arm(key,btn,label,orig){
 /* ========= Generar ========= */
 function generate(){
   const a=JSON.parse(JSON.stringify(S.draft));
-  ['age','kmWeek','longRun','daysNow','days','longDay','maxWeekday','maxWeekend','strengthDays','otherSports','tRace','bestTime','goalTime'].forEach(k=>{if(a[k]!==''&&a[k]!=null)a[k]=+a[k];});
+  ['age','kmWeek','longRun','daysNow','days','runDays','strDays','longDay','maxWeekday','maxWeekend','strengthDays','otherSports','tRace','bestTime','goalTime'].forEach(k=>{if(a[k]!==''&&a[k]!=null)a[k]=+a[k];});
   fixA(a);if(!DCFG[a.dist])a.dist='21';if(!a.raceDate)a.raceDate='2027-04-04';if(!a.raceName)a.raceName='Carrera';
   const Lh=S.hist.length?S.hist[S.hist.length-1].a:null;const sameStart=Lh&&Lh.startDate===a.startDate&&Lh.raceDate===a.raceDate&&Lh.dist===a.dist;
   setCal(a);a.lowWeeks=(a.lowWeeks||[]).filter(x=>{const n=dayDiff(START,parseISO(x))/7+1;return n>=1&&n<PB.TS;});
@@ -1360,7 +1437,7 @@ document.addEventListener('click',async e=>{
   const b=e.target.closest('[data-a]');if(!b)return;
   const A=b.dataset.a,id=b.dataset.id;
   if(A==='start'){S.draft=Object.assign({},JSON.parse(JSON.stringify(DEF)),{startDate:defStart()});UI.view='quiz';UI.step=0;UI.errs={};UI.editing=false;save();render();window.scrollTo(0,0);}
-  else if(A==='set'){let v=b.dataset.v;if(/^\d+$/.test(v)&&['daysNow','days','longDay','strengthDays','otherSports'].includes(b.dataset.k))v=+v;S.draft[b.dataset.k]=v;delete UI.errs[b.dataset.k];save();render(true);}
+  else if(A==='set'){let v=b.dataset.v;if(/^\d+$/.test(v)&&['daysNow','days','runDays','strDays','longDay','strengthDays','otherSports'].includes(b.dataset.k))v=+v;S.draft[b.dataset.k]=v;delete UI.errs[b.dataset.k];save();render(true);}
   else if(A==='sw'){const k=b.dataset.k;S.draft[k]=S.draft[k]==='si'?'no':'si';save();render(true);}
   else if(A==='tog'){const k=b.dataset.k,v=k==='lowWeeks'?b.dataset.v:+b.dataset.v,arr=(S.draft[k]||[]).slice();const i=arr.indexOf(v);if(i>=0)arr.splice(i,1);else arr.push(v);arr.sort((x,y)=>x-y);S.draft[k]=arr;delete UI.errs[k];save();render(true);}
   else if(A==='next'){UI.errs=validate(UI.step);if(Object.keys(UI.errs).length){render(true);const f=document.querySelector('.err');if(f)f.closest('.field').scrollIntoView({behavior:'smooth',block:'center'});return;}
@@ -1369,7 +1446,7 @@ document.addEventListener('click',async e=>{
   else if(A==='cancelEdit'){S.draft=null;UI.editing=false;UI.view='plan';save();render();window.scrollTo(0,0);}
   else if(A==='tab'){UI.tab=b.dataset.v;render();window.scrollTo(0,0);}
   else if(A==='wk'){const w=+b.dataset.w;if(UI.open.has(w))UI.open.delete(w);else UI.open.add(w);render(true);}
-  else if(A==='done'||A==='editLog'){const s0=findS(id),l=S.log[id];UI.lf={id,km:l&&l.km!=null?l.km:(s0.km||''),min:l&&l.min!=null?l.min:s0.min,paceTxt:l&&l.pace?mmss(l.pace):'',rpe:l?l.rpe:null,pain:l?+l.pain||0:0,zone:l?l.zone||'':'',note:l?l.note||'':''};render(true);}
+  else if(A==='done'||A==='editLog'){const s0=findS(id),l=S.log[id];UI.lf={id,hr:l&&l.hr?l.hr:'',km:l&&l.km!=null?l.km:(s0.km||''),min:l&&l.min!=null?l.min:s0.min,paceTxt:l&&l.pace?mmss(l.pace):'',rpe:l?l.rpe:null,pain:l?+l.pain||0:0,zone:l?l.zone||'':'',note:l?l.note||'':''};render(true);}
   else if(A==='lfSet'){const k=b.dataset.k;UI.lf[k]=k==='zone'?b.dataset.v:+b.dataset.v;if(k==='pain'&&+b.dataset.v===0)UI.lf.zone='';UI.lf.err='';render(true);}
   else if(A==='lfCancel'){UI.lf=null;render(true);}
   else if(A==='lfSave'){const s0=findS(id),W=weekOfS(s0),f=UI.lf;
@@ -1392,7 +1469,7 @@ document.addEventListener('click',async e=>{
     const p=proposals().find(x=>x.id===id);if(!S.dismiss)S.dismiss={};
     if(!p){render(true);return;}
     if(A==='pNo'){S.dismiss[id]=1;save();render(true);return;}
-    if(p.k==='days'){S.draft=fixA(JSON.parse(JSON.stringify(S.answers)));S.draft.days=p.n+1;if(S.draft.prefDays&&S.draft.prefDays.length&&!S.draft.prefDays.includes(p.day))S.draft.prefDays=S.draft.prefDays.concat(p.day).sort((x,y)=>x-y);UI.editing=true;generate();UI.tab='res';render();toast('Plan recalculado con '+(p.n+1)+' días');return;}
+    if(p.k==='days'){S.draft=fixA(JSON.parse(JSON.stringify(S.answers)));S.draft.days=p.n+1;S.draft.runDays=p.n+1;if(S.draft.prefDays&&S.draft.prefDays.length&&!S.draft.prefDays.includes(p.day))S.draft.prefDays=S.draft.prefDays.concat(p.day).sort((x,y)=>x-y);UI.editing=true;generate();UI.tab='res';render();toast('Plan recalculado con '+(p.n+1)+' días');return;}
     if(p.k==='move'){S.moves[p.s.id]=p.to;if(S.log[p.s.id]&&S.log[p.s.id].st==='skip')delete S.log[p.s.id];toast('Sesión movida al '+DAYS[p.to].toLowerCase());}
     else if(p.k==='drop'){p.list.forEach(i=>{S.log[i.s.id]={st:'skip',date:iso(today0())};});}
     else{if(!S.repeats)S.repeats=[];S.repeats=S.repeats.filter(r=>r.at!==p.at);S.repeats.push({at:p.at,base:p.base});
@@ -1404,14 +1481,11 @@ document.addEventListener('click',async e=>{
   else if(A==='backup')backupSheet();
   else if(A==='closeSheet')closeSheet();
   else if(A==='bkCopy'){const ok=await copyText(document.getElementById('bkOut').value);if(ok)toast('Copia copiada al portapapeles');else{const t=document.getElementById('bkOut');t.focus();t.select();toast('Selecciona el texto y cópialo');}}
-  else if(A==='bkImport'){
-    const err=document.getElementById('bkErr');err.textContent='';let d;
-    try{d=JSON.parse(document.getElementById('bkIn').value.trim());}catch(x){err.textContent='El texto no es una copia válida.';return;}
-    const nd=d&&d.app==='EntrenAppRun'?norm(d):null;
-    if(!nd||!nd.hist.length){err.textContent='El texto no es una copia de EntrenApp Run.';return;}
-    if(S.answers&&!arm('imp',b,'Pulsa otra vez para sustituir','Importar'))return;
-    nd.draft=null;adopt(nd);save();closeSheet();
-    UI.view='plan';UI.tab='plan';UI.open=new Set([openWk()]);render();window.scrollTo(0,0);toast('Copia importada');}
+  else if(A==='bkImport'){doImport(b);}
+  else if(A==='bkFile'){const txt=JSON.stringify(persisted());let ok=false;
+    if(!ONCLAUDE){try{const u=URL.createObjectURL(new Blob([txt],{type:'application/json'})),a2=document.createElement('a');a2.href=u;a2.download='entrenapp-run-progreso-'+iso(today0())+'.json';document.body.appendChild(a2);a2.click();a2.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);ok=true;}catch(x){}}
+    toast(ok?'Archivo descargado':'Aquí no se pueden descargar archivos: usa Copiar texto');}
+  else if(A==='bkPrev'){const pb=prevBackup();if(!pb)return;if(!arm('prev',b,'Pulsa otra vez para restaurar','Restaurar esa copia'))return;adopt(pb.d);save();closeSheet();UI.view='plan';UI.tab='plan';UI.open=new Set([openWk()]);render();window.scrollTo(0,0);toast('Copia anterior restaurada');}
   else if(A==='reset'){
     if(!arm('reset',b,'Pulsa otra vez para borrar','Empezar de nuevo'))return;
     UI.armed.reset=false;S=Object.assign({v:2,hist:[],log:{},moves:{},draft:null,repeats:[],dismiss:{},savedAt:0},EMPTYX());try{localStorage.removeItem(KEY);}catch(x){}save();UI.view='welcome';render();window.scrollTo(0,0);}
@@ -1436,19 +1510,32 @@ document.addEventListener('input',e=>{
     const pc=document.getElementById('lfpc');if(pc&&k!=='pace'){const km=+UI.lf.km,mn=+UI.lf.min;pc.textContent=km>0&&mn>0?'Calculado: '+mmss(mn*60/km)+' /km. Corrígelo si tu reloj dice otra cosa.':'Se calcula con los km y los minutos.';const pi=document.getElementById('lfpace');if(pi)pi.placeholder=km>0&&mn>0?mmss(mn*60/km):'';}}
   else if(t.dataset.x==='km'){UI.xkm=t.value;}
 });
-document.addEventListener('change',e=>{
+document.addEventListener('change',async e=>{
   const t=e.target;
+  if(t.dataset.file==='act'&&UI.lf){
+    try{const {name,buf}=await readFile(t);const r=parseActivity(name,buf);const s0=findS(UI.lf.id),W=weekOfS(s0),sd=sDate(W,s0);
+      UI.lf.adate=r.start?iso(new Date(r.start.getFullYear(),r.start.getMonth(),r.start.getDate())):'';UI.lf.km=Math.round(r.km*100)/100;UI.lf.min=Math.round(r.sec/60);UI.lf.paceTxt='';if(r.hr)UI.lf.hr=r.hr;
+      let msg=`Importado: ${nf(r.km,2)} km · ${hms(r.sec)} · ${mmss(r.sec/r.km)} /km${r.hr?' · '+r.hr+' ppm':''}.`;
+      if(r.start&&iso(new Date(r.start.getFullYear(),r.start.getMonth(),r.start.getDate()))!==iso(sd))msg+=` La actividad es del ${fmtD(r.start)} (la sesión era del ${fmtD(sd)}); se usará su fecha real para calcular la carga.`;
+      UI.lf.imp=msg+' Añade el RPE y el dolor.';UI.lf.err='';}
+    catch(x){UI.lf.err='No se pudo leer el archivo. Usa un .fit, .gpx o .tcx exportado de tu reloj o de Strava.';UI.lf.imp='';}
+    render(true);return;}
+  if(t.dataset.file==='bk'){try{const {buf}=await readFile(t);document.getElementById('bkIn').value=new TextDecoder().decode(new Uint8Array(buf));doImport(document.getElementById('bkBtn'));}catch(x){const er=document.getElementById('bkErr');if(er)er.textContent='No se pudo leer el archivo.';}return;}
   if(t.dataset.mv){const s=findS(t.dataset.mv),v=+t.value;if(v===s.day)delete S.moves[s.id];else S.moves[s.id]=v;save();render(true);toast('Sesión movida al '+DAYS[v].toLowerCase());}
   else if(t.dataset.in&&t.tagName==='SELECT'){S.draft[t.dataset.in]=+t.value;save();}
   else if(t.dataset.in==='startDate'||t.dataset.in==='raceDate'){S.draft[t.dataset.in]=t.value;delete UI.errs[t.dataset.in];save();render(true);}
 });
 /* ========= Inicio ========= */
+{try{const raw=localStorage.getItem(KEY2)||localStorage.getItem(KEY),pv=localStorage.getItem(KAPPV);
+  if(raw&&pv!==APPV){localStorage.setItem(KPREV,JSON.stringify({at:Date.now(),from:pv||'anterior',data:raw}));UI.updated=true;}
+  localStorage.setItem(KAPPV,APPV);}catch(e){}}
 {const d=load();if(d)adopt(d);}
 if(S.answers&&S.plan){UI.view='plan';UI.open=new Set([openWk()]);}
 else if(S.draft){UI.view='quiz';}
 else UI.view='welcome';
 if(!UI.open)UI.open=new Set();
 render();
+if(UI.updated&&S.answers)setTimeout(()=>toast('App actualizada. Tu progreso se ha conservado.'),400);
 initRemote();
 </script>
 </body>
