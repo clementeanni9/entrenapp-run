@@ -539,7 +539,7 @@ function buildPlan(a,P,repeats,bopt){
   const t0=today0();
   const pushW=W=>{
     if(W.n===1)W.sessions=W.sessions.filter(s=>s.day>=startDow);
-    (S.extras&&S.extras[W.n]||[]).forEach(x=>{const e=easyS(x.id,x.day,+x.km||3,P,false);e.type='extra';e.extra=true;e.title='Rodaje suave (extra)';e.rpeExp=3.5;e.note='Suave de verdad. Este día suma volumen, no intensidad.';W.sessions.push(e);});
+    (S.extras&&S.extras[W.n]||[]).forEach(x=>{const e=easyS(x.id,x.day,+x.km||3,P,false);e.type='extra';e.extra=true;e.xpast=!!x.past;e.title='Rodaje suave (extra)';e.rpeExp=3.5;e.note='Suave de verdad. Este día suma volumen, no intensidad.';W.sessions.push(e);});
     if(hasAdj(W.n,'noQ'))W.sessions=W.sessions.map(s=>{if((s.type==='quality')&&!S.log[s.id]&&dDate(W.n,dayOf(s))>=t0){const e=easyS(s.id,s.day,r05(Math.max(3,s.km*.7)),P,false);e.note='Cambiada a rodaje suave por la carga reciente.';return e;}return s;});
     if(RESTR.length)W.sessions=W.sessions.filter(s=>{if(!RUNT.has(s.type)||S.log[s.id])return true;const d=dDate(W.n,dayOf(s));return !RESTR.some(([f,t])=>d>=f&&d<=t);});
     W.vol=Math.round(W.sessions.filter(s=>!s.optional&&!s.extra).reduce((t,s)=>t+(s.km||0),0)*10)/10;
@@ -801,13 +801,23 @@ function dayLabel(W,d){
   if(ss.length)return ['green','Buen día (tienes fuerza)'];
   return ['green','Buen día'];
 }
+const xPast=(w,d)=>dDate(w,d)<today0();
+function xLabel(W,d,past){const r=dayLabel(W,d);if(past&&r[1]==='Ojo: ya tienes sesión de carrera')return ['orange','Doble sesión: ese día ya tenías carrera'];return r;}
 function extraSheet(w){
-  const W=S.plan[w-1],cw=curWeek(),t=today0(),from=w===cw?(t.getDay()+6)%7:0,P=profile(S.answers);
-  if(UI.xd==null||UI.xd<from){UI.xd=null;for(let d=from;d<=6;d++){if(dayLabel(W,d)[0]==='green'){UI.xd=d;break;}}if(UI.xd==null)UI.xd=from;}
-  const r=recExtra(w,UI.xd);if(UI.xkm==null)UI.xkm=r.rec;
+  const W=S.plan[w-1],cw=curWeek(),t=today0(),ti=(t.getDay()+6)%7,P=profile(S.answers);
+  const start=w===cw?ti:0;
+  if(UI.xd==null){for(let d=start;d<=6;d++){if(xLabel(W,d,xPast(w,d))[0]==='green'){UI.xd=d;break;}}if(UI.xd==null)UI.xd=start;}
+  const past=xPast(w,UI.xd);
   let h=`<h3 style="font-size:20px">Día extra · semana ${w}</h3><p class="small">Siempre rodaje suave. Elige el día:</p><div class="opts">`;
-  for(let d=from;d<=6;d++){const [c,lab]=dayLabel(W,d);h+=`<button class="opt${UI.xd===d?' on':''}" data-a="xDay" data-v="${d}"><span>${DAYS[d]} ${fmtD(dDate(w,d))}<br><small style="color:var(--${c});font-weight:500">${lab}</small></span>${UI.xd===d?CHECK:''}</button>`;}
+  for(let d=0;d<=6;d++){const pd=xPast(w,d),[c,lab]=xLabel(W,d,pd);h+=`<button class="opt${UI.xd===d?' on':''}" data-a="xDay" data-v="${d}"><span>${DAYS[d]} ${fmtD(dDate(w,d))}${pd?' <small style="color:var(--t3);font-weight:500">· pasado</small>':''}<br><small style="color:var(--${c});font-weight:500">${lab}</small></span>${UI.xd===d?CHECK:''}</button>`;}
   h+='</div>';
+  if(past){
+    const dbl=xLabel(W,UI.xd,true)[1].startsWith('Doble');
+    if(dbl)h+=`<div class="alert" style="--c:var(--orange);margin-top:12px"><b>Doble sesión</b><p>Ese día ya tenías una sesión de carrera. Se añade como segunda sesión y cuenta en tu carga.</p></div>`;
+    h+=`<p class="small" style="margin-top:12px">Es un día pasado: lo añades y registras directamente lo que hiciste (puedes importar el archivo del reloj).</p>
+    <button class="btn" data-a="extraPast" data-w="${w}">Añadir y registrar</button><button class="btn sec" style="margin-top:10px" data-a="closeSheet">Cancelar</button>`;
+    sheet(h);return;}
+  const r=recExtra(w,UI.xd);if(UI.xkm==null)UI.xkm=r.rec;
   if(r.painBad)h+=`<div class="alert" style="--c:var(--red);margin-top:12px"><b>Mejor no</b><p>Has tenido dolor de más de 3/10 en los últimos 7 días. Sumar carga ahora es lo contrario de lo que necesitas.</p></div>`;
   else if(!r.ok)h+=`<div class="alert" style="--c:var(--orange);margin-top:12px"><b>Esta semana no conviene sumar</b><p>${r.loadBad?'Tu carga ya está en zona de riesgo. ':'Ya estás en el límite razonable de la semana. '}Si lo haces, que sean como mucho ${nf(r.rec,1)} km muy suaves.</p></div>`;
   else h+=`<div class="alert" style="--c:var(--green);margin-top:12px"><b>Recomendación: ${nf(r.rec,1)} km suaves</b><p>Unos ${Math.round(r.rec*P.mid('easy')/60)} min. Es lo que cabe sin que la semana suba más de un 10 % sobre lo previsto ni tu ACWR pase de 1,3.</p></div>`;
@@ -1220,7 +1230,7 @@ function weekHTML(W,P,cw){
       h+=ss.length?ss.map(s=>sessionHTML(s,W,P)).join(''):'<div class="rest">Descanso</div>';
       h+='</div>';
     }
-    if(W.n>=Math.max(cw,1)&&W.n<PB.TS&&cw<=NW)h+=`<button class="btn sec" style="margin-top:8px" data-a="extraOpen" data-w="${W.n}">Añadir día extra</button>`;
+    if((W.n<Math.min(cw,NW+1))||(W.n>=Math.max(cw,1)&&W.n<PB.TS&&cw<=NW))h+=`<button class="btn sec" style="margin-top:8px" data-a="extraOpen" data-w="${W.n}">Añadir día extra</button>`;
     h+='</div>';
   }
   return h+'</div>';
@@ -1448,12 +1458,15 @@ document.addEventListener('click',async e=>{
   else if(A==='wk'){const w=+b.dataset.w;if(UI.open.has(w))UI.open.delete(w);else UI.open.add(w);render(true);}
   else if(A==='done'||A==='editLog'){const s0=findS(id),l=S.log[id];UI.lf={id,hr:l&&l.hr?l.hr:'',km:l&&l.km!=null?l.km:(s0.km||''),min:l&&l.min!=null?l.min:s0.min,paceTxt:l&&l.pace?mmss(l.pace):'',rpe:l?l.rpe:null,pain:l?+l.pain||0:0,zone:l?l.zone||'':'',note:l?l.note||'':''};render(true);}
   else if(A==='lfSet'){const k=b.dataset.k;UI.lf[k]=k==='zone'?b.dataset.v:+b.dataset.v;if(k==='pain'&&+b.dataset.v===0)UI.lf.zone='';UI.lf.err='';render(true);}
-  else if(A==='lfCancel'){UI.lf=null;render(true);}
+  else if(A==='extraPast'){const w=+b.dataset.w,xid='x'+w+'-'+Date.now().toString(36);if(!S.extras[w])S.extras[w]=[];S.extras[w].push({id:xid,day:UI.xd,km:3,past:true});rebuild();save();closeSheet();UI.open.add(w);
+    UI.lf={id:xid,hr:'',km:'',min:'',paceTxt:'',rpe:null,pain:0,zone:'',note:''};render(true);setTimeout(()=>{const e=document.querySelector('[data-lf=km]');if(e)e.scrollIntoView({block:'center',behavior:'smooth'});},120);}
+  else if(A==='lfCancel'){const s0=UI.lf&&findS(UI.lf.id);if(s0&&s0.xpast&&!S.log[s0.id]){Object.keys(S.extras).forEach(w=>{S.extras[w]=S.extras[w].filter(x=>x.id!==s0.id);});rebuild();save();}UI.lf=null;render(true);}
   else if(A==='lfSave'){const s0=findS(id),W=weekOfS(s0),f=UI.lf;
     if(!f.rpe){f.err='Elige el RPE para guardar.';render(true);return;}
     if(+f.pain>0&&!f.zone){f.err='Indica dónde te duele.';render(true);return;}
     if(RUNT.has(s0.type)&&(f.km===''||isNaN(+f.km))){f.err='Indica los km que corriste.';render(true);return;}
-    logChange(()=>{S.log[id]=lfDraftLog(s0,W);if(S.noAdj)delete S.noAdj[W.n];},W.n);UI.lf=null;}
+    if(s0.xpast&&(f.min===''||!(+f.min>0))){f.err='Indica los minutos.';render(true);return;}
+    logChange(()=>{S.log[id]=lfDraftLog(s0,W);if(s0.xpast)Object.keys(S.extras).forEach(w=>S.extras[w].forEach(x=>{if(x.id===id)x.km=S.log[id].km||x.km;}));if(S.noAdj)delete S.noAdj[W.n];},W.n);UI.lf=null;}
   else if(A==='skip'){const W=weekOfS(findS(id));logChange(()=>{S.log[id]={st:'skip',date:iso(sDate(W,findS(id)))};},W.n);}
   else if(A==='unlog'){const W=weekOfS(findS(id));logChange(()=>{delete S.log[id];},W.n);}
   else if(A==='rOk'||A==='rNo'){const x=riskAlerts().find(r=>r.key===b.dataset.k);if(!S.dismiss)S.dismiss={};S.dismiss[b.dataset.k]=1;if(x&&A==='rOk'){applyRisk(x);rebuild();toast('Plan ajustado');}save();render(true);}
