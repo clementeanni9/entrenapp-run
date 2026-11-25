@@ -655,15 +655,16 @@ function buildPlan(a,P,repeats,bopt){
     if(kind!=='taper')peakL=Math.max(peakL,L);
     const si=w-SS,finIdx=ph==='spec'&&si%2===0?si/2:-1;
     let fin=0;if(finIdx>=0){if(dk==='10')fin=lv==='b'?2:3;else if(dk==='21')fin=finIdx===0?{b:2,i:3,a:3}[lv]:{b:3,i:4,a:5}[lv];else fin=[6,9,12][Math.min(finIdx,2)]-(lv==='b'?2:0);}
-    prevLong=L;add(longS(`w${w}-long`,sch.ld,L,Math.min(fin,Math.floor(L/(dk==='42'?2.5:3))),P));
     const eDays=sch.run.filter(d=>d!==sch.ld&&!qUsed.includes(d));
-    let eTot=V-L-qKm;
-    let nE=Math.min(eDays.length,Math.max(0,Math.floor(eTot/minE+.34)));
-    if(eDays.length&&nE===0&&eTot>minE*.5)nE=1;
+    const minF=r05(Math.max(2,15*60/eM));
+    let nE=eDays.length;
+    if(nE&&V-L-qKm<nE*minF){const cut=Math.min(nE*minF-(V-L-qKm),Math.max(0,L-3));L=r05(L-cut);}
+    let eTot=Math.max(V-L-qKm,nE*minF);
+    prevLong=L;add(longS(`w${w}-long`,sch.ld,L,Math.min(fin,Math.floor(L/(dk==='42'?2.5:3))),P));
     let used=[];
     if(nE>0){
       used=nE>=eDays.length?eDays:spread(eDays,nE,null);
-      let per=r05(Math.max(minE,eTot/nE));
+      let per=r05(Math.max(minF,eTot/nE));
       const stDay=w>=2?used.slice().sort((x,y)=>cd(x,(sch.ld+5)%7)-cd(y,(sch.ld+5)%7))[0]:null;
       used.forEach((d,i)=>{const cap=r05(dMax(d)*60/eM);add(easyS(`w${w}-e${i+1}`,d,Math.min(per,cap),P,d===stDay));});
     }
